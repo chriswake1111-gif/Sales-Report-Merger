@@ -1,0 +1,5 @@
+{
+  "name": "Sales Report Merger",
+  "description": "A utility to merge multiple Excel sales reports (.xls/.xlsx) into a single file, sorted by Order Number, with row count verification to prevent data loss.",
+  "requestFramePermissions": []
+}

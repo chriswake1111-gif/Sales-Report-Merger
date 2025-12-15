@@ -1,0 +1,15 @@
+{
+  "short_name": "報表合併",
+  "name": "銷售報表合併工具",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/732/732220.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#2563EB",
+  "background_color": "#F9FAFB"
+}
