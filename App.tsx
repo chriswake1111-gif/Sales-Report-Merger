@@ -54,13 +54,25 @@ const App: React.FC = () => {
     setIsProcessing(true);
     setMergeStatus('processing');
 
+    const targetColumn = sortColumn.trim();
+
     // Small timeout to allow UI to update to 'processing' state
     setTimeout(() => {
       try {
         // Validate sort column exists in at least one file
-        const hasColumn = files.some(f => f.headers.includes(sortColumn));
+        // We trim the headers in the file service, so we trim the input here too
+        const hasColumn = files.some(f => f.headers.includes(targetColumn));
+        
         if (!hasColumn) {
-          const proceed = window.confirm(`警告：在匯入的檔案中找不到「${sortColumn}」欄位。合併將繼續，但排序可能無法正常運作。是否繼續？`);
+          // Get a list of available headers from the first file to help user debug
+          const availableHeaders = files[0]?.headers.slice(0, 5).join(', ') + (files[0]?.headers.length > 5 ? '...' : '');
+          
+          const proceed = window.confirm(
+            `警告：在匯入的檔案中找不到「${targetColumn}」欄位。\n\n` +
+            `偵測到的欄位範例：${availableHeaders}\n\n` +
+            `合併將繼續，但排序可能無法正常運作。是否繼續？`
+          );
+          
           if (!proceed) {
             setIsProcessing(false);
             setMergeStatus('idle');
@@ -68,7 +80,7 @@ const App: React.FC = () => {
           }
         }
 
-        const merged = mergeData(files, sortColumn);
+        const merged = mergeData(files, targetColumn);
         exportToExcel(merged, outputFilename);
         setMergeStatus('success');
       } catch (error) {

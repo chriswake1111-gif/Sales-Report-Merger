@@ -20,7 +20,8 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         const worksheet = workbook.Sheets[firstSheetName];
         
         // Parse to JSON to get data and headers
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        // defval: "" ensures that empty cells produce an empty string value instead of being undefined
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
         
         if (jsonData.length === 0) {
            resolve({
@@ -35,8 +36,19 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
           return;
         }
 
-        // Extract headers from the first row object keys
-        const headers = Object.keys(jsonData[0] as object);
+        // Normalize data: Trim whitespace from keys (headers)
+        // This fixes issues where Excel headers are " 單號 " instead of "單號"
+        const normalizedData = jsonData.map((row: any) => {
+          const newRow: any = {};
+          Object.keys(row).forEach(key => {
+            const cleanKey = key.trim();
+            newRow[cleanKey] = row[key];
+          });
+          return newRow;
+        });
+
+        // Extract headers from the first row object keys of the normalized data
+        const headers = Object.keys(normalizedData[0] as object);
 
         resolve({
           id: crypto.randomUUID(),
@@ -44,7 +56,7 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
           size: file.size,
           rowCount: jsonData.length,
           headers,
-          data: jsonData,
+          data: normalizedData, // Use the data with trimmed keys
         });
       } catch (err) {
         console.error("Error parsing excel:", err);
@@ -63,12 +75,13 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
 export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
   // Combine all data arrays
   const allData = files.flatMap(file => file.data);
+  const cleanSortKey = sortKey.trim();
 
   // Sort based on the provided key (default: 單號)
   // We attempt to handle both string and number sorting
   return allData.sort((a, b) => {
-    const valA = a[sortKey];
-    const valB = b[sortKey];
+    const valA = a[cleanSortKey];
+    const valB = b[cleanSortKey];
 
     if (valA === valB) return 0;
     
@@ -77,8 +90,12 @@ export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
     if (valB === undefined || valB === null) return -1;
 
     // Numeric sort
-    if (typeof valA === 'number' && typeof valB === 'number') {
-      return valA - valB;
+    // Check if both values are valid numbers (even if they are strings in JSON)
+    const numA = Number(valA);
+    const numB = Number(valB);
+
+    if (!isNaN(numA) && !isNaN(numB) && valA !== '' && valB !== '') {
+        return numA - numB;
     }
 
     // String sort
