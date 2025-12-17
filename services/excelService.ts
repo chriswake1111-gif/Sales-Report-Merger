@@ -13,7 +13,13 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         const data = e.target?.result;
         if (!data) throw new Error("File is empty");
 
-        const workbook = XLSX.read(data, { type: 'array' });
+        // Use more robust options for reading to handle format differences
+        // cellDates: true helps standardize date handling between XLS and XLSX,
+        // ensuring they are parsed as Date objects instead of potentially inconsistent serial numbers.
+        const workbook = XLSX.read(data, { 
+          type: 'array',
+          cellDates: true 
+        });
         
         // Assume data is in the first sheet
         const firstSheetName = workbook.SheetNames[0];
@@ -23,10 +29,19 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         // defval: "" ensures that empty cells produce an empty string value instead of being undefined
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
         
+        // Handle "conversion" from XLS to XLSX
+        // If the original file was XLS, we treat the parsed workbook as the converted XLSX structure
+        // and update the filename to reflect this modernization.
+        let finalFileName = file.name;
+        if (finalFileName.toLowerCase().endsWith('.xls') && !finalFileName.toLowerCase().endsWith('.xlsx')) {
+          // Replace .xls (case insensitive) with .xlsx
+          finalFileName = finalFileName.replace(/\.xls$/i, '.xlsx');
+        }
+
         if (jsonData.length === 0) {
            resolve({
             id: crypto.randomUUID(),
-            name: file.name,
+            name: finalFileName,
             size: file.size,
             rowCount: 0,
             headers: [],
@@ -52,7 +67,7 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
 
         resolve({
           id: crypto.randomUUID(),
-          name: file.name,
+          name: finalFileName, // Return the converted name (.xlsx)
           size: file.size,
           rowCount: jsonData.length,
           headers,
@@ -89,7 +104,7 @@ export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
     if (valA === undefined || valA === null) return 1;
     if (valB === undefined || valB === null) return -1;
 
-    // Numeric sort
+    // Numeric sort (handles Dates converted to numbers too)
     // Check if both values are valid numbers (even if they are strings in JSON)
     const numA = Number(valA);
     const numB = Number(valB);
