@@ -14,7 +14,10 @@ const Dropzone: React.FC<DropzoneProps> = ({ onFilesSelected, isProcessing }) =>
       if (isProcessing) return;
 
       const droppedFiles = Array.from(e.dataTransfer.files).filter(
-        (file: File) => file.name.endsWith('.xls') || file.name.endsWith('.xlsx')
+        (file: File) => 
+          file.name.endsWith('.xls') || 
+          file.name.endsWith('.xlsx') ||
+          file.name.endsWith('.csv')
       );
       if (droppedFiles.length > 0) {
         onFilesSelected(droppedFiles);
@@ -50,7 +53,7 @@ const Dropzone: React.FC<DropzoneProps> = ({ onFilesSelected, isProcessing }) =>
         type="file"
         id="fileInput"
         multiple
-        accept=".xls,.xlsx"
+        accept=".xls,.xlsx,.csv"
         className="hidden"
         onChange={handleFileInput}
         disabled={isProcessing}
@@ -64,7 +67,7 @@ const Dropzone: React.FC<DropzoneProps> = ({ onFilesSelected, isProcessing }) =>
             點擊或拖曳檔案至此
           </h3>
           <p className="text-sm text-gray-500 mt-1">
-            支援 .xls 與 .xlsx 格式銷售報表
+            支援 .xls, .xlsx 與 .csv 格式銷售報表
           </p>
         </div>
       </div>
