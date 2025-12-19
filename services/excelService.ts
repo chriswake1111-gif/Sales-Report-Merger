@@ -3,38 +3,43 @@ import { ProcessedFile } from '../types';
 
 /**
  * Utility to repair garbled Chinese characters often found in older .xls files.
- * This happens when Big5 bytes are misinterpreted as Latin-1 characters.
+ * This should ONLY be applied if we are sure the string is misinterpreted Latin-1.
  */
-const repairEncoding = (val: any): any => {
-  if (typeof val !== 'string') return val;
+const repairEncoding = (val: any, isOldFormat: boolean): any => {
+  if (typeof val !== 'string' || !isOldFormat || val.length === 0) return val;
   
-  // Heuristic: Check if the string contains characters in the Latin-1 supplement range (0x80-0xFF)
-  // which are typical symptoms of misinterpreted Big5 bytes (e.g., "單號" becoming "³æ¸¹").
-  if (/[^\x00-\x7F]/.test(val)) {
-    try {
-      // Convert the string characters back to their raw byte values (0-255)
-      const bytes = new Uint8Array(val.split('').map(c => c.charCodeAt(0) & 0xFF));
-      
-      // Attempt to decode as Big5 (Standard for Traditional Chinese in .xls)
-      // 'big5' decoder is built-in to most modern browsers.
-      // We use fatal: false to let it pass through if it's not actually Big5.
-      const decoder = new TextDecoder('big5', { fatal: false });
-      const decoded = decoder.decode(bytes);
-      
-      // If the decoded string contains replacement characters (), it means some bytes 
-      // couldn't be mapped. However, many sales reports have mixed content.
-      // We check if the result looks more "Chinese-like" or is at least different.
-      if (decoded && decoded !== val && !decoded.includes('\ufffd')) {
-        return decoded;
-      }
-      
-      // If it has some  but also valid Chinese, it might still be better than the garbled Latin-1.
-      return decoded;
-    } catch (e) {
+  // HEURISTIC: Misinterpreted Big5-as-Latin-1 strings ALWAYS consist 
+  // ONLY of characters in the 0-255 range (the byte values).
+  // If there is even one character > 255 (like a real Chinese Unicode char),
+  // then the string is NOT garbled Latin-1 and we must not touch it.
+  let hasNonAscii = false;
+  for (let i = 0; i < val.length; i++) {
+    const code = val.charCodeAt(i);
+    if (code > 255) return val; // Already has real Unicode/Chinese, skip repair
+    if (code > 127) hasNonAscii = true; // Found potential Big5 byte
+  }
+
+  // If it's pure ASCII (0-127), no repair needed
+  if (!hasNonAscii) return val;
+
+  try {
+    // Convert the string characters back to their raw byte values (0-255)
+    const bytes = new Uint8Array(val.split('').map(c => c.charCodeAt(0) & 0xFF));
+    
+    // Attempt to decode as Big5. 
+    // fatal: true helps us detect if it's actually valid Big5 or just random binary data.
+    const decoder = new TextDecoder('big5', { fatal: false });
+    const decoded = decoder.decode(bytes);
+    
+    // Safety check: if the decoded result is empty or just replacement chars, fall back.
+    if (!decoded || decoded.includes('\ufffd') && decoded.length < val.length / 2) {
       return val;
     }
+    
+    return decoded;
+  } catch (e) {
+    return val;
   }
-  return val;
 };
 
 /**
@@ -49,19 +54,18 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         const data = e.target?.result;
         if (!data) throw new Error("File is empty");
 
-        const isOldFormat = file.name.toLowerCase().endsWith('.xls');
+        const fileNameLower = file.name.toLowerCase();
+        const isOldFormat = fileNameLower.endsWith('.xls') && !fileNameLower.endsWith('.xlsx');
 
         // Read the workbook. 
-        // For older XLS files (BIFF8), we disable non-essential features like formulas and styles.
-        // This often bypasses errors related to non-standard or unsupported XLS records (like 0x27d).
-        // Record 0x27d is often a continuation record that the parser struggles with on specific files.
         const workbook = XLSX.read(data, { 
           type: 'array',
           cellDates: true,
-          cellFormula: false, // Don't parse formulas to avoid complex record issues
-          cellStyles: false,  // Don't parse styles to reduce overhead and potential parsing errors
-          cellNF: true,       // Keep number formats for better date/number conversion
-          codepage: 950       // Suggest Big5 for older formats if codepage support is active
+          cellFormula: false,
+          cellStyles: false,
+          cellNF: true,
+          // Only force codepage for truly old XLS files
+          codepage: isOldFormat ? 950 : undefined 
         });
         
         const firstSheetName = workbook.SheetNames[0];
@@ -72,7 +76,7 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         
         // Handle filename modernization
         let finalFileName = file.name;
-        if (isOldFormat && !finalFileName.toLowerCase().endsWith('.xlsx')) {
+        if (isOldFormat) {
           finalFileName = finalFileName.replace(/\.xls$/i, '.xlsx');
         }
 
@@ -90,21 +94,21 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         }
 
         // Normalize data: 
-        // 1. Trim whitespace from keys
-        // 2. Repair encoding for both keys and values
+        // 1. Repair encoding ONLY for old .xls formats
+        // 2. Trim whitespace from headers
         const normalizedData = jsonData.map((row: any) => {
           const newRow: any = {};
           Object.keys(row).forEach(key => {
-            // Repair the key (header) name
-            const repairedKey = repairEncoding(key).trim();
-            // Repair the value content
-            const repairedValue = repairEncoding(row[key]);
+            // Repair the key (header) name - only if it's an old file
+            const repairedKey = repairEncoding(key, isOldFormat).trim();
+            // Repair the value content - only if it's an old file
+            const repairedValue = repairEncoding(row[key], isOldFormat);
             newRow[repairedKey] = repairedValue;
           });
           return newRow;
         });
 
-        // Extract headers from the first row of normalized data
+        // Extract headers from the first row
         const headers = Object.keys(normalizedData[0] as object);
 
         resolve({
