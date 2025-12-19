@@ -16,14 +16,21 @@ const repairEncoding = (val: any): any => {
       const bytes = new Uint8Array(val.split('').map(c => c.charCodeAt(0) & 0xFF));
       
       // Attempt to decode as Big5 (Standard for Traditional Chinese in .xls)
-      // 'big5' decoder is built-in to most modern browsers
-      const decoded = new TextDecoder('big5').decode(bytes);
+      // 'big5' decoder is built-in to most modern browsers.
+      // We use fatal: false to let it pass through if it's not actually Big5.
+      const decoder = new TextDecoder('big5', { fatal: false });
+      const decoded = decoder.decode(bytes);
       
-      // If the decoded string contains replacement characters (), the decoding might have failed.
-      // Otherwise, return the repaired string.
-      return decoded.includes('') ? val : decoded;
+      // If the decoded string contains replacement characters (), it means some bytes 
+      // couldn't be mapped. However, many sales reports have mixed content.
+      // We check if the result looks more "Chinese-like" or is at least different.
+      if (decoded && decoded !== val && !decoded.includes('\ufffd')) {
+        return decoded;
+      }
+      
+      // If it has some  but also valid Chinese, it might still be better than the garbled Latin-1.
+      return decoded;
     } catch (e) {
-      // If decoding fails, return the original string
       return val;
     }
   }
@@ -42,12 +49,19 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         const data = e.target?.result;
         if (!data) throw new Error("File is empty");
 
+        const isOldFormat = file.name.toLowerCase().endsWith('.xls');
+
         // Read the workbook. 
-        // Note: For older XLS files, if the encoding isn't detected correctly, 
-        // characters might be garbled. We will fix this in the normalization step.
+        // For older XLS files (BIFF8), we disable non-essential features like formulas and styles.
+        // This often bypasses errors related to non-standard or unsupported XLS records (like 0x27d).
+        // Record 0x27d is often a continuation record that the parser struggles with on specific files.
         const workbook = XLSX.read(data, { 
           type: 'array',
-          cellDates: true 
+          cellDates: true,
+          cellFormula: false, // Don't parse formulas to avoid complex record issues
+          cellStyles: false,  // Don't parse styles to reduce overhead and potential parsing errors
+          cellNF: true,       // Keep number formats for better date/number conversion
+          codepage: 950       // Suggest Big5 for older formats if codepage support is active
         });
         
         const firstSheetName = workbook.SheetNames[0];
@@ -58,7 +72,7 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         
         // Handle filename modernization
         let finalFileName = file.name;
-        if (finalFileName.toLowerCase().endsWith('.xls') && !finalFileName.toLowerCase().endsWith('.xlsx')) {
+        if (isOldFormat && !finalFileName.toLowerCase().endsWith('.xlsx')) {
           finalFileName = finalFileName.replace(/\.xls$/i, '.xlsx');
         }
 
