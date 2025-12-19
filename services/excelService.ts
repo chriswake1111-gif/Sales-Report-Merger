@@ -2,6 +2,35 @@ import * as XLSX from 'xlsx';
 import { ProcessedFile } from '../types';
 
 /**
+ * Utility to repair garbled Chinese characters often found in older .xls files.
+ * This happens when Big5 bytes are misinterpreted as Latin-1 characters.
+ */
+const repairEncoding = (val: any): any => {
+  if (typeof val !== 'string') return val;
+  
+  // Heuristic: Check if the string contains characters in the Latin-1 supplement range (0x80-0xFF)
+  // which are typical symptoms of misinterpreted Big5 bytes (e.g., "單號" becoming "³æ¸¹").
+  if (/[^\x00-\x7F]/.test(val)) {
+    try {
+      // Convert the string characters back to their raw byte values (0-255)
+      const bytes = new Uint8Array(val.split('').map(c => c.charCodeAt(0) & 0xFF));
+      
+      // Attempt to decode as Big5 (Standard for Traditional Chinese in .xls)
+      // 'big5' decoder is built-in to most modern browsers
+      const decoded = new TextDecoder('big5').decode(bytes);
+      
+      // If the decoded string contains replacement characters (), the decoding might have failed.
+      // Otherwise, return the repaired string.
+      return decoded.includes('') ? val : decoded;
+    } catch (e) {
+      // If decoding fails, return the original string
+      return val;
+    }
+  }
+  return val;
+};
+
+/**
  * Reads a file and parses it into JSON
  */
 export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
@@ -13,28 +42,23 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         const data = e.target?.result;
         if (!data) throw new Error("File is empty");
 
-        // Use more robust options for reading to handle format differences
-        // cellDates: true helps standardize date handling between XLS and XLSX,
-        // ensuring they are parsed as Date objects instead of potentially inconsistent serial numbers.
+        // Read the workbook. 
+        // Note: For older XLS files, if the encoding isn't detected correctly, 
+        // characters might be garbled. We will fix this in the normalization step.
         const workbook = XLSX.read(data, { 
           type: 'array',
           cellDates: true 
         });
         
-        // Assume data is in the first sheet
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // Parse to JSON to get data and headers
-        // defval: "" ensures that empty cells produce an empty string value instead of being undefined
+        // Parse to JSON
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
         
-        // Handle "conversion" from XLS to XLSX
-        // If the original file was XLS, we treat the parsed workbook as the converted XLSX structure
-        // and update the filename to reflect this modernization.
+        // Handle filename modernization
         let finalFileName = file.name;
         if (finalFileName.toLowerCase().endsWith('.xls') && !finalFileName.toLowerCase().endsWith('.xlsx')) {
-          // Replace .xls (case insensitive) with .xlsx
           finalFileName = finalFileName.replace(/\.xls$/i, '.xlsx');
         }
 
@@ -51,27 +75,31 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
           return;
         }
 
-        // Normalize data: Trim whitespace from keys (headers)
-        // This fixes issues where Excel headers are " 單號 " instead of "單號"
+        // Normalize data: 
+        // 1. Trim whitespace from keys
+        // 2. Repair encoding for both keys and values
         const normalizedData = jsonData.map((row: any) => {
           const newRow: any = {};
           Object.keys(row).forEach(key => {
-            const cleanKey = key.trim();
-            newRow[cleanKey] = row[key];
+            // Repair the key (header) name
+            const repairedKey = repairEncoding(key).trim();
+            // Repair the value content
+            const repairedValue = repairEncoding(row[key]);
+            newRow[repairedKey] = repairedValue;
           });
           return newRow;
         });
 
-        // Extract headers from the first row object keys of the normalized data
+        // Extract headers from the first row of normalized data
         const headers = Object.keys(normalizedData[0] as object);
 
         resolve({
           id: crypto.randomUUID(),
-          name: finalFileName, // Return the converted name (.xlsx)
+          name: finalFileName,
           size: file.size,
           rowCount: jsonData.length,
           headers,
-          data: normalizedData, // Use the data with trimmed keys
+          data: normalizedData,
         });
       } catch (err) {
         console.error("Error parsing excel:", err);
@@ -88,24 +116,17 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
  * Merges data from multiple files and sorts them
  */
 export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
-  // Combine all data arrays
   const allData = files.flatMap(file => file.data);
   const cleanSortKey = sortKey.trim();
 
-  // Sort based on the provided key (default: 單號)
-  // We attempt to handle both string and number sorting
   return allData.sort((a, b) => {
     const valA = a[cleanSortKey];
     const valB = b[cleanSortKey];
 
     if (valA === valB) return 0;
-    
-    // Handle undefined/nulls (push to bottom)
     if (valA === undefined || valA === null) return 1;
     if (valB === undefined || valB === null) return -1;
 
-    // Numeric sort (handles Dates converted to numbers too)
-    // Check if both values are valid numbers (even if they are strings in JSON)
     const numA = Number(valA);
     const numB = Number(valB);
 
@@ -113,7 +134,6 @@ export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
         return numA - numB;
     }
 
-    // String sort
     return String(valA).localeCompare(String(valB));
   });
 };
@@ -122,15 +142,12 @@ export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
  * Exports data to an XLSX file
  */
 export const exportToExcel = (data: any[], filename: string) => {
-  // Create a new workbook
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Merged Data");
 
-  // Ensure filename ends with .xlsx
   const safeFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
 
-  // Write and download with compression enabled
-  // This is critical for large files to avoid massive XML overhead
+  // Write and download with compression
   XLSX.writeFile(workbook, safeFilename, { compression: true });
 };
