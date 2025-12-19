@@ -130,6 +130,7 @@ export const exportToExcel = (data: any[], filename: string) => {
   // Ensure filename ends with .xlsx
   const safeFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
 
-  // Write and download
-  XLSX.writeFile(workbook, safeFilename);
+  // Write and download with compression enabled
+  // This is critical for large files to avoid massive XML overhead
+  XLSX.writeFile(workbook, safeFilename, { compression: true });
 };
