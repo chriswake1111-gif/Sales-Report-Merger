@@ -70,7 +70,7 @@ finally:
     
     try:
         result = subprocess.run(
-            ['python', helper_script],
+            [sys.executable, helper_script],
             capture_output=True, text=True, timeout=timeout, cwd=temp_dir
         )
         output = result.stdout.strip()

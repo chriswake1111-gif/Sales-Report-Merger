@@ -43,7 +43,9 @@ ipcMain.handle('parse-excel', async (event, filePath) => {
     return new Promise((resolve, reject) => {
         // Find python executable (standard 'python' or 'python3')
         const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
-        const scriptPath = path.join(__dirname, '../scripts/excel_parser.py');
+        const scriptPath = app.isPackaged
+            ? path.join(process.resourcesPath, 'scripts', 'excel_parser.py')
+            : path.join(__dirname, '../scripts/excel_parser.py');
         // Security: Validate file path and extension
         if (!filePath || typeof filePath !== 'string') {
             return resolve({ success: false, error: 'Invalid file path' });
