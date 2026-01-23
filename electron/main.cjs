@@ -56,7 +56,9 @@ ipcMain.handle('parse-excel', async (event, filePath) => {
         }
 
         console.log(`Running Python parser for: ${filePath}`);
-        const pyProg = spawn(pythonPath, [scriptPath, filePath]);
+        const pyProg = spawn(pythonPath, [scriptPath, filePath], {
+            cwd: path.dirname(scriptPath)
+        });
         let dataString = '';
         let errorString = '';
 

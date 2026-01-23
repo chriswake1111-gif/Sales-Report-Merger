@@ -94,6 +94,41 @@ finally:
         except: pass
 
 
+def smart_convert_value(x):
+    """
+    Smartly convert strings to numbers:
+    - If it starts with '0' and length > 1 (e.g., "0123"), keep as string (likely ID/phone).
+    - If it looks like a number (e.g., "123", "10.5"), convert to int/float.
+    - Otherwise keep as string.
+    """
+    if not isinstance(x, str):
+        return x
+    
+    x = x.strip()
+    if not x:
+        return ""
+        
+    # Check for leading zero ID
+    if x.startswith('0') and len(x) > 1 and x.replace('.', '', 1).isdigit():
+        # Exception: "0.5" is a number, not an ID usually. 
+        # But "0123" is an ID.
+        if '.' in x:
+            try:
+                val = float(x)
+                if val < 1 and val > -1: # It's like 0.5
+                    return val
+            except:
+                pass
+        return x
+
+    # Try convert to number
+    try:
+        if '.' in x:
+            return float(x)
+        return int(x)
+    except:
+        return x
+
 def parse_excel(file_path):
     log(f"Parsing: {file_path}")
     
@@ -113,7 +148,8 @@ def parse_excel(file_path):
             if xlsx_path and os.path.exists(xlsx_path):
                 log("COM success!")
                 temp_xlsx_path = xlsx_path
-                df = pd.read_excel(xlsx_path, engine='openpyxl')
+                # FORCE STRING to preserve leading zeros
+                df = pd.read_excel(xlsx_path, engine='openpyxl', dtype=str)
                 method = "excel_com"
             else:
                 log(f"COM failed ({error}), using xlrd...")
@@ -121,9 +157,11 @@ def parse_excel(file_path):
                 try:
                     import xlrd
                     wb = xlrd.open_workbook(file_path, encoding_override="cp950")
-                    df = pd.read_excel(wb, engine='xlrd')
+                    # FORCE STRING
+                    df = pd.read_excel(wb, engine='xlrd', dtype=str)
                 except:
-                    df = pd.read_excel(file_path, engine='xlrd')
+                    # FORCE STRING
+                    df = pd.read_excel(file_path, engine='xlrd', dtype=str)
                 
                 # 修復亂碼
                 df.columns = [try_repair_mojibake(str(c)) for c in df.columns]
@@ -133,13 +171,15 @@ def parse_excel(file_path):
         elif ext == '.csv':
             for enc in ['cp950', 'big5', 'utf-8']:
                 try:
-                    df = pd.read_csv(file_path, encoding=enc)
+                    # FORCE STRING
+                    df = pd.read_csv(file_path, encoding=enc, dtype=str)
                     method = f"csv_{enc}"
                     break
                 except:
                     pass
         else:
-            df = pd.read_excel(file_path, engine='openpyxl')
+            # FORCE STRING
+            df = pd.read_excel(file_path, engine='openpyxl', dtype=str)
             method = "openpyxl"
 
         if df is None:
@@ -151,7 +191,11 @@ def parse_excel(file_path):
             except: pass
 
         df = df.fillna("")
-        df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
+        
+        # Apply smart conversion
+        # We iterate columns to be safe
+        for col in df.columns:
+            df[col] = df[col].apply(smart_convert_value)
 
         log(f"Method: {method}, Rows: {len(df)}, Headers: {list(df.columns)[:3]}")
 

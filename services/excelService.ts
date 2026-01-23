@@ -11,7 +11,7 @@ let cptable: any = {};
 try {
   // Handle ESM default export options
   // @ts-ignore
-  const rawCpexcel = cpexcel.default || cpexcel;
+  const rawCpexcel = cpexcel;
 
   // Clone to ensure extensibility
   cptable = { ...rawCpexcel };
@@ -130,7 +130,7 @@ export const parseExcelFile = async (file: File): Promise<ProcessedFile> => {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
 
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
 
         let finalFileName = file.name;
         if (fileNameLower.endsWith('.xls') || fileNameLower.endsWith('.csv')) {

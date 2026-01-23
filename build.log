@@ -1,0 +1,12 @@
+
+> sales-report-merger@1.0.0 build
+> tsc && vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+
+[1m[33mwarn[39m[22m - Your `content` configuration includes a pattern which looks like it's accidentally matching all of `node_modules` and can cause serious performance issues.
+[1m[33mwarn[39m[22m - Pattern: `./**\*.ts`
+[1m[33mwarn[39m[22m - See our documentation for recommendations:
+[1m[33mwarn[39m[22m - https://tailwindcss.com/docs/content-configuration#pattern-recommendations
+[32m✓[39m 1474 modules transformed.
