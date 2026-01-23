@@ -1,117 +1,113 @@
 import * as XLSX from 'xlsx';
 import { ProcessedFile } from '../types';
 
-// Map of Windows-1252 characters (0x80-0x9F) that map to Unicode > 255.
-// These often appear when Big5 bytes are interpreted as CP1252.
-const CP1252_REV_MAP: { [key: number]: number } = {
-  8364: 128, // €
-  8218: 130, // ‚
-  402: 131,  // ƒ
-  8222: 132, // „
-  8230: 133, // …
-  8224: 134, // †
-  8225: 135, // ‡
-  710: 136,  // ˆ
-  8240: 137, // ‰
-  352: 138,  // Š
-  8249: 139, // ‹
-  338: 140,  // Œ
-  381: 142,  // Ž
-  8216: 145, // ‘
-  8217: 146, // ’
-  8220: 147, // “
-  8221: 148, // ”
-  8226: 149, // •
-  8211: 150, // –
-  8212: 151, // —
-  732: 152,  // ˜
-  8482: 153, // ™
-  353: 154,  // š
-  8250: 155, // ›
-  339: 156,  // œ
-  382: 158,  // ž
-  376: 159   // Ÿ
-};
+/* load 'cpexcel' for codepages */
+// @ts-ignore
+import * as cpexcel from 'xlsx/dist/cpexcel.full.mjs';
 
-/**
- * Utility to repair garbled Chinese characters.
- * Handles cases where Big5 bytes are interpreted as Latin-1 (ISO-8859-1) or Windows-1252.
- */
-const repairEncoding = (val: any): any => {
-  if (typeof val !== 'string' || val.length === 0) return val;
-  
-  // 1. If it contains valid CJK Unified Ideographs (Common Chinese chars), 
-  // it is likely already correct. We trust it.
-  // Note: We used to return immediately, but sometimes a string can be mixed (partially correct, partially garbled).
-  // However, usually if SheetJS detects one part right, it detects the whole string right (same codepage).
-  // The user's issue is typically ALL-garbled or ALL-correct.
-  // For safety, if we see ANY Chinese, we assume it's correct to avoid false positives in repair.
-  if (/[\u4E00-\u9FFF]/.test(val)) return val;
+// Monkey patch: Map 164 and 176 to 950 (Big5)
+let cptable: any = {};
 
-  // 2. If strictly ASCII (0-127), no repair needed.
-  let isAscii = true;
-  for (let i = 0; i < val.length; i++) {
-    if (val.charCodeAt(i) > 127) {
-      isAscii = false;
-      break;
-    }
+try {
+  // Handle ESM default export options
+  // @ts-ignore
+  const rawCpexcel = cpexcel.default || cpexcel;
+
+  // Clone to ensure extensibility
+  cptable = { ...rawCpexcel };
+
+  // Check for the utils.decode function (the core of all translations)
+  if (cptable.utils && typeof cptable.utils.decode === 'function') {
+    // Clone utils to avoid mutating frozen objects
+    cptable.utils = { ...cptable.utils };
+    const originalDecode = cptable.utils.decode;
+
+    // INTERCEPTOR: Redirect 164/176/168 -> 950
+    cptable.utils.decode = function (cp: number, data: any) {
+      const table = cptable.cptable || cptable;
+      const has950 = !!(table[950] || table['950']);
+
+      if (cp === 164 || cp === 176 || cp === 168) {
+        if (!has950) {
+          console.error(`Sales-Merger Error: Redirecting CP${cp} to CP950 failed because CP950 is MISSING! Available keys count: ${Object.keys(table).length}`);
+        }
+        // Redirection for legacy pharmacy/system reports
+        return originalDecode.call(this, 950, data);
+      }
+      return originalDecode.apply(this, arguments as any);
+    };
+    console.log("Sales-Merger: Successfully installed interceptor for CP164/176/168 -> CP950.");
+    console.log("Sales-Merger: Initial CP950 check:", !!((cptable.cptable || cptable)[950]));
+  } else {
+    console.warn("Sales-Merger: Could not find utils.decode to patch!");
   }
-  if (isAscii) return val;
+} catch (e) {
+  console.error("Sales-Merger: Failed to patch codepages:", e);
+}
 
-  // 3. Attempt to convert from "Garbage" (Latin-1/CP1252) back to Raw Bytes.
-  const bytes = new Uint8Array(val.length);
-  for (let i = 0; i < val.length; i++) {
-    const code = val.charCodeAt(i);
-    
-    if (code < 256) {
-      bytes[i] = code;
-    } else if (CP1252_REV_MAP[code]) {
-      bytes[i] = CP1252_REV_MAP[code];
-    } else {
-      // Contains a high-unicode char that isn't in our CP1252 map.
-      // This might be valid Unicode (e.g. Emoji) or something we can't reverse.
-      // In this case, we abort repair to avoid data corruption.
-      return val;
-    }
+XLSX.set_cptable(cptable);
+
+declare global {
+  interface Window {
+    electronAPI?: {
+      parseExcel: (filePath: string) => Promise<any>;
+      getPath: (file: File) => string;
+      isElectron: boolean;
+    };
   }
-
-  // 4. Decode the bytes as Big5
-  try {
-    const decoder = new TextDecoder('big5', { fatal: false });
-    const decoded = decoder.decode(bytes);
-    
-    // 5. Validation Logic
-    
-    // Check if the decoded string contains valid Chinese characters.
-    const hasChinese = /[\u4E00-\u9FFF]/.test(decoded);
-    
-    if (hasChinese) {
-        // If we uncovered valid Chinese, we accept the repair.
-        // Even if 'decoded' contains some replacement characters (\ufffd), 
-        // it is better than the original completely garbled string.
-        return decoded;
-    }
-    
-    // If no Chinese was found, and the decoding produced replacement characters,
-    // it implies the bytes were not valid Big5. Return original.
-    if (decoded.includes('\ufffd')) {
-      return val;
-    }
-
-    // If no Chinese but also no errors (e.g. valid CP1252 mapped to valid Big5 ASCII/Symbols),
-    // we can return the decoded string. Since standard ASCII is the same in both,
-    // this usually just results in the same string or valid symbol conversion.
-    return decoded;
-
-  } catch (e) {
-    return val;
-  }
-};
+}
 
 /**
  * Reads a file and parses it into JSON
  */
-export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
+export const parseExcelFile = async (file: File): Promise<ProcessedFile> => {
+  // Check if we are in Electron and get the physical file path
+  let electronPath = (file as any).path;
+
+  if (window.electronAPI && window.electronAPI.getPath) {
+    try {
+      electronPath = window.electronAPI.getPath(file);
+    } catch (e) {
+      console.warn("Sales-Merger: Failed to get path via getPath API, trying property:", e);
+    }
+  }
+
+  console.log("Sales-Merger Debug: electronAPI present:", !!window.electronAPI);
+  console.log("Sales-Merger Debug: file.path present:", !!electronPath);
+  if (electronPath) console.log("Sales-Merger Debug: file.path content:", electronPath);
+
+  if (window.electronAPI && electronPath) {
+    try {
+      console.log("Using Electron Python parser for:", electronPath);
+      const result = await window.electronAPI.parseExcel(electronPath);
+
+      if (!result.success) {
+        if (result.rawOutput) console.error("Sales-Merger Debug: Raw Python Output:", result.rawOutput);
+        if (result.stderr) console.error("Sales-Merger Debug: Python Stderr:", result.stderr);
+        throw new Error(result.error || "Failed to parse file via Electron");
+      }
+
+      let fileNameLower = file.name.toLowerCase();
+      let finalFileName = file.name;
+      if (fileNameLower.endsWith('.xls') || fileNameLower.endsWith('.csv')) {
+        finalFileName = finalFileName.replace(/\.(xls|csv)$/i, '.xlsx');
+      }
+
+      return {
+        id: crypto.randomUUID(),
+        name: finalFileName,
+        size: file.size,
+        rowCount: result.rowCount || result.data.length,
+        headers: result.headers || (result.data.length > 0 ? Object.keys(result.data[0]) : []),
+        data: result.data,
+      };
+    } catch (err) {
+      console.error("Electron parsing failed, falling back to browser:", err);
+      // Fallback to browser parsing below
+    }
+  }
+
+  // BROWSER FALLBACK
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
@@ -121,32 +117,28 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
         if (!data) throw new Error("File is empty");
 
         const fileNameLower = file.name.toLowerCase();
-        
-        // Use 'array' type. 
-        // Note: For .xls files, SheetJS often prioritizes internal codepage info over the 'codepage' option.
-        // If the file is mislabeled internally (common in generated reports), we get mojibake.
-        // We rely on 'repairEncoding' to fix it post-parsing.
-        const workbook = XLSX.read(data, { 
+
+        const workbook = XLSX.read(data, {
           type: 'array',
           cellDates: true,
           cellFormula: false,
           cellStyles: false,
           cellNF: true,
-          codepage: 950 
+          codepage: 950
         });
-        
+
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        
+
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-        
+
         let finalFileName = file.name;
         if (fileNameLower.endsWith('.xls') || fileNameLower.endsWith('.csv')) {
           finalFileName = finalFileName.replace(/\.(xls|csv)$/i, '.xlsx');
         }
 
         if (jsonData.length === 0) {
-           resolve({
+          resolve({
             id: crypto.randomUUID(),
             name: finalFileName,
             size: file.size,
@@ -158,19 +150,16 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
           return;
         }
 
-        // Normalize data
         const normalizedData = jsonData.map((row: any) => {
-          const newRow: any = {};
+          const newRow: Record<string, any> = {};
           Object.keys(row).forEach(key => {
-            // Repair encoding for both Keys (headers) and Values
-            const repairedKey = repairEncoding(key).trim();
-            const repairedValue = repairEncoding(row[key]);
-            newRow[repairedKey] = repairedValue;
+            const cleanKey = key.trim();
+            const val = row[key];
+            newRow[cleanKey] = typeof val === 'string' ? val.trim() : val;
           });
           return newRow;
         });
 
-        // Extract headers from the first row of normalized data
         const headers = Object.keys(normalizedData[0] as object);
 
         resolve({
@@ -182,7 +171,7 @@ export const parseExcelFile = (file: File): Promise<ProcessedFile> => {
           data: normalizedData,
         });
       } catch (err) {
-        console.error("Error parsing excel:", err);
+        console.error("Browser parsing error:", err);
         reject(err);
       }
     };
@@ -211,7 +200,7 @@ export const mergeData = (files: ProcessedFile[], sortKey: string): any[] => {
     const numB = Number(valB);
 
     if (!isNaN(numA) && !isNaN(numB) && valA !== '' && valB !== '') {
-        return numA - numB;
+      return numA - numB;
     }
 
     return String(valA).localeCompare(String(valB));

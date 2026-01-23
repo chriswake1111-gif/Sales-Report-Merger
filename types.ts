@@ -4,7 +4,7 @@ export interface ProcessedFile {
   size: number;
   rowCount: number;
   headers: string[];
-  data: any[];
+  data: Record<string, any>[];
   error?: string;
 }
 
