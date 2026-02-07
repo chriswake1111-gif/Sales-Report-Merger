@@ -5,6 +5,9 @@ import FileList from './components/FileList';
 import { ProcessedFile, MergeStatus } from './types';
 import { parseExcelFile, mergeData, exportToExcel } from './services/excelService';
 
+// Lazy load TauriDebug to avoid issues when running in standard Electron/Web mode if dependencies are missing or platform-specific codes interfere at load time
+const TauriDebug = React.lazy(() => import('./components/TauriDebug'));
+
 const App: React.FC = () => {
   const [files, setFiles] = useState<ProcessedFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -29,11 +32,11 @@ const App: React.FC = () => {
   const handleFilesSelected = async (newFiles: File[]) => {
     setIsProcessing(true);
     setMergeStatus('idle');
-    
+
     try {
       const processedPromises = newFiles.map(parseExcelFile);
       const processedResults = await Promise.all(processedPromises);
-      
+
       setFiles(prev => [...prev, ...processedResults]);
     } catch (error) {
       console.error("Error processing files:", error);
@@ -50,7 +53,7 @@ const App: React.FC = () => {
 
   const handleMergeAndDownload = () => {
     if (files.length === 0) return;
-    
+
     setIsProcessing(true);
     setMergeStatus('processing');
 
@@ -62,17 +65,17 @@ const App: React.FC = () => {
         // Validate sort column exists in at least one file
         // We trim the headers in the file service, so we trim the input here too
         const hasColumn = files.some(f => f.headers.includes(targetColumn));
-        
+
         if (!hasColumn) {
           // Get a list of available headers from the first file to help user debug
           const availableHeaders = files[0]?.headers.slice(0, 5).join(', ') + (files[0]?.headers.length > 5 ? '...' : '');
-          
+
           const proceed = window.confirm(
             `警告：在匯入的檔案中找不到「${targetColumn}」欄位。\n\n` +
             `偵測到的欄位範例：${availableHeaders}\n\n` +
             `合併將繼續，但排序可能無法正常運作。是否繼續？`
           );
-          
+
           if (!proceed) {
             setIsProcessing(false);
             setMergeStatus('idle');
@@ -119,7 +122,7 @@ const App: React.FC = () => {
         {/* Main Card */}
         <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
           <div className="p-8">
-            
+
             {/* 1. Upload Section */}
             <div className="mb-8">
               <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
@@ -131,6 +134,11 @@ const App: React.FC = () => {
 
             {/* File List */}
             <FileList files={files} onRemove={removeFile} />
+
+            {/* Tauri Debug Section */}
+            <React.Suspense fallback={null}>
+              <TauriDebug />
+            </React.Suspense>
 
             {/* 2. Configuration Section */}
             {files.length > 0 && (
@@ -180,18 +188,18 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Validation Info */}
-                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6 flex items-start">
-                    <div className="mr-3 mt-0.5 text-blue-600">
-                        <AlertTriangle size={20} />
-                    </div>
-                    <div className="text-sm text-blue-800">
-                        <p className="font-semibold mb-1">合併預覽確認：</p>
-                        <ul className="list-disc pl-4 space-y-1">
-                            <li>將合併 <strong>{files.length}</strong> 份文件。</li>
-                            <li>預計產出總筆數：<strong>{totalRows.toLocaleString()}</strong> 筆資料。</li>
-                            <li>輸出格式為 <strong>.xlsx</strong> (Excel 活頁簿)。</li>
-                        </ul>
-                    </div>
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6 flex items-start">
+                  <div className="mr-3 mt-0.5 text-blue-600">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="text-sm text-blue-800">
+                    <p className="font-semibold mb-1">合併預覽確認：</p>
+                    <ul className="list-disc pl-4 space-y-1">
+                      <li>將合併 <strong>{files.length}</strong> 份文件。</li>
+                      <li>預計產出總筆數：<strong>{totalRows.toLocaleString()}</strong> 筆資料。</li>
+                      <li>輸出格式為 <strong>.xlsx</strong> (Excel 活頁簿)。</li>
+                    </ul>
+                  </div>
                 </div>
 
                 {/* Actions */}
@@ -206,11 +214,10 @@ const App: React.FC = () => {
                   <button
                     onClick={handleMergeAndDownload}
                     disabled={isProcessing || files.length === 0}
-                    className={`flex items-center px-6 py-2 border border-transparent text-base font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-                      isProcessing || files.length === 0
-                        ? 'bg-blue-400 cursor-not-allowed'
-                        : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
+                    className={`flex items-center px-6 py-2 border border-transparent text-base font-medium rounded-md shadow-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${isProcessing || files.length === 0
+                      ? 'bg-blue-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                      }`}
                   >
                     {isProcessing ? (
                       <>處理中...</>
@@ -225,17 +232,17 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
-          
+
           {/* Footer Status Bar */}
           <div className="bg-gray-50 px-8 py-4 border-t border-gray-200">
-             <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-500">支援舊版 .xls 與新版 .xlsx 格式</span>
-                {mergeStatus === 'success' && (
-                    <span className="text-green-600 font-medium flex items-center">
-                        ✓ 下載已開始
-                    </span>
-                )}
-             </div>
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-gray-500">支援舊版 .xls 與新版 .xlsx 格式</span>
+              {mergeStatus === 'success' && (
+                <span className="text-green-600 font-medium flex items-center">
+                  ✓ 下載已開始
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
